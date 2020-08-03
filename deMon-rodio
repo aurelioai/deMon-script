@@ -208,6 +208,10 @@
                           queue=$1
                           shift
                           continue;;
+               (-runs|-r) shift
+                          runs=$1
+                          shift
+                          continue;;
         (-memory|-mem|-m) shift
                           memory=$1
                           shift
