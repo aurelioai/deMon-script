@@ -8,6 +8,7 @@
 #@(#)
 #@(#) Version 3.0 (29.10.05, Florian Janetzko)
 #@(#) Version 3.1 (02.08.17, Gerald Geudtner)
+#@(#) Version 3.X (03.08.20) This is the reference script!! Do not touch
 #
     shopt -s extglob
     set +o noclobber
