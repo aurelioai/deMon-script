@@ -1,0 +1,878 @@
+#!/bin/bash 
+#
+#@(#)
+#@(#) UNIX procedure to submit deMon jobs (Andreas M. Koster, April 2002)
+#@(#) Setup: Generic NQS 3.5x/PBS script for Quimica Teorica, CINVESTAV
+#@(#) Extension: NQS and PBS MPI runs (Gerald Geudtner, December 2004) 
+#@(#) Ported to bash (Florian Janetzko, October 2005)
+#@(#)
+#@(#) Version 3.0 (29.10.05, Florian Janetzko)
+#@(#) Version 3.1 (02.08.17, Gerald Geudtner)
+#@(#) Version 3.x a ver que pasa
+#
+    shopt -s extglob
+    set +o noclobber
+#
+### Load the name of this procedure ###
+#
+    PROC=${0##*/}
+#
+### Aliasing of commands ###
+#
+    alias cat='\cat'
+    alias chmod='\chmod'
+    alias cp='\cp'
+    alias echo='\echo'  
+    alias mkdir='\mkdir'
+    alias mv='\mv'
+    alias rm='\rm'
+#
+    LANG=C
+    LC_MESSAGES=C
+#
+### Declaration of integer variables ###
+#
+    typeset -i icount niceval=4 number
+#
+### Functions ###
+#
+    function clean
+    {
+      if [[ -d $wrkdir ]]; then
+        rm -rf $wrkdir
+      fi
+    }
+#
+    function exit_1
+    {
+      clean
+      echo -e "\n Abnormal termination of $PROC.\n\n"
+      exit 1
+    }
+#
+    function iferrstat
+    {
+      if (( $? != 0 )); then
+        if [[ -n $1 ]]; then
+          echo -e "\n $PROC: An error occurred executing the command:\n\n $1\n"
+        fi
+        if [[ -n $2 ]]; then
+          echo -e " $2\n"
+        fi
+        exit_1
+      fi
+    }
+    function getversion
+    {
+      eval var='$1'
+      eval date=$(echo $var | cut -f2 -d" ")
+      eval var=$(echo $var | cut -f1 -d" ")
+      if [[ $date = $var ]]; then
+        eval $5=''
+      else
+        eval $5="\($date\)"
+      fi
+      typeset -i part
+      for (( part=1; part < 4; part=part+1)); do
+        versnum[$part]=$(echo $var | cut -f$part -d ".")
+      done
+      versnum[4]=$(echo $var | cut -f4 -d ".")
+      eval $2='$(echo ${versnum[1]}.${versnum[2]})'
+      if [[ -n ${versnum[4]} ]]; then
+        eval $3='${versnum[3]}'
+        eval $4='${versnum[4]}'
+      elif [[ -n ${versnum[3]} ]]; then
+        if [[ $(expr index "${versnum[3]}" "1234567890") -eq 1 ]]; then
+          eval $3='${versnum[3]}'
+          eval $4=''
+        else
+          eval $3=''
+          eval $4='${versnum[3]}'
+        fi
+      fi
+    }
+#
+    trap 'echo -e "\n\n The procedure $PROC was interrupted.\n\n"; \
+          clean; \
+          exit 2' 1 2 3
+#
+### Set program name ###
+#
+    PROG=deMon
+    prog=$(echo $PROG | tr A-Z a-z)
+#
+### Set reference directory ###
+#
+    if [[ -n $CREX_ROOT ]]; then
+      refdir=$CREX_ROOT/$PROG
+    else
+      refdir=/usr/local/$PROG
+    fi
+#
+### Set $HOME directory ###
+#
+    if [[ ! -n $CREX_HOME ]]; then
+      CREX_HOME=$HOME
+    fi
+#
+### Set working directory ###
+#
+    if [[ -n $TMPDIR ]]; then
+      tmpdir=$TMPDIR
+    else
+      tmpdir=/work
+    fi
+#
+### Get host name ###
+#
+    host=$(hostname)
+    shorthost=$(echo $host|cut -f1 -d".")
+#
+### Load the number of the default program version ###
+#
+    if [[ -s $CREX_HOME/$prog/.default-version ]]; then
+      VERSION=$(<$CREX_HOME/$prog/.default-version)
+    else
+      VERSION=$(<$refdir/.default-version)
+    fi
+#
+### Get program version ###
+#
+    getversion "$VERSION" VERSION REVISION FTN DATE
+#
+    MAJVER=${VERSION%.*}
+    MINVER=${VERSION#*.}
+    VERNUM=$((MAJVER*10000+MINVER*100+REVISION))
+    OLDNUM=40403
+#
+    if [[ -n $REVISION ]]; then
+      VERSION=$(echo "$VERSION.$REVISION")
+    fi
+#
+### Set an alternate compiler ###
+#
+    FTN0=$FTN
+#
+    if [[ -n "$CREX_FTN" ]]; then
+      FTN=$CREX_FTN
+    fi
+#
+    if [[ x"$FTN0" == x"$FTN" ]]; then
+      unset FTN
+    else
+      FTN="."$FTN
+    fi
+#
+    if [[ $VERNUM -le $OLDNUM ]]; then
+      unset FTN
+    fi
+#
+    while true; do
+      case $1 in
+               (-h|-help) echo -e " "
+                          echo -e " -h,-help        \t\t\t this help menu"
+                          echo -e " -ib,-background \t\t\t interactive job (background)"
+                          echo -e " -if,-foreground \t\t\t interactive job (foreground)"
+                          echo -e " -jn,-jobname    \t\t\t job name"
+                          echo -e " -nv,-nicevalue  \t\t\t nice value"
+                          echo -e " -op,-outputpath \t\t\t output path"
+                          echo -e " -p,-program     \t\t\t program version"
+                          echo -e " -q,-queue       \t\t\t NQS batch queue\n"
+                          exit;;
+        (-background|-ib) shift
+                          modus="interactive"
+                          queue="background"
+                          continue;;
+        (-foreground|-if) shift
+                          modus="interactive"
+                          queue="foreground"
+                          continue;;
+           (-jobname|-jn) shift
+                          jobname=$1
+                          shift
+                          continue;;
+         (-nicevalue|-nv) shift
+                          niceval=$1
+                          shift
+                          continue;;
+        (-outputpath|-op) shift
+                          outpath=$1
+                          shift
+                          continue;;
+            (-program|-p) shift
+                          version=$1
+                          shift
+                          continue;;
+              (-queue|-q) shift
+                          modus="batch"
+                          queue=$1
+                          shift
+                          continue;;
+        (-memory|-mem|-m) shift
+                          memory=$1
+                          shift
+                          continue;;
+    (-queueopt|-qopt|-qo) shift
+                          qopt=$1
+                          shift
+                          continue;;
+                     (-*) echo -e "\n $PROC: Invalid option $1\n"
+                          exit;;
+                      (*) break;;
+      esac
+    done
+#
+### Check memory paramter ###
+#
+    memory=${memory:-1}
+    if [[ $memory -lt 1 || $memory -gt 9 ]]; then
+      echo -e "\n $PROC: The given value for memory: >$memory< is incorrect"
+      exit_1
+    fi
+#
+    inpfile=$1
+#
+    while true; do
+      if [[ -z $inpfile ]]; then
+        echo -e "\n Enter the name of the input file: \c"
+        read inpfile
+        continue
+      elif [[ ! -f $inpfile ]]; then
+        if [[ -f ${inpfile%.inp} ]]; then
+          inpfile=${inpfile%.inp}
+        else
+          echo -e "\n $PROC: The input file $inpfile does not exist"
+          echo -e "\n Enter the name of the input file: \c"
+          read inpfile
+        fi
+        continue
+      elif [[ ! -s $inpfile ]]; then
+        echo -e "\n $PROC: The file $inpfile is empty"
+        echo -e "\n Enter the name of the input file: \c"
+        read inpfile
+        continue
+      else
+        break
+      fi
+    done
+#
+    inpfiletail=${inpfile##*/}
+#
+### Define job name ###
+#
+    if [[ -z $jobname ]]; then
+      jobname=$inpfiletail
+    fi
+#
+### Eliminate leading spaces from the job name ###
+#
+    jobname=${jobname##+(" ")}
+#
+### Check job name for special (@) character and length ###
+#
+    typeset -i index length
+#
+    forbidden='@'
+    index=$(expr index "$jobname" "$forbidden")
+    length=$(expr length "$jobname")
+#
+    if [[ $index != 0 ]]; then
+      echo -e "\n The @ character is not allowed in the job name!"
+      exit_1
+    elif [[ $length -gt 15 ]]; then
+      echo -e "\n Job name is restricted to 15 characters!"
+      exit_1
+    fi
+#
+### Set network queueing system directory ###
+#
+    nqsdir=$HOME/nqstmp/$USER"."$shorthost"."$jobname"."$(date|cut -f2 -d" ")"-"$(date|cut -f3 -d" ")"."$$
+#
+### Check for network queueing system ###
+#
+    nqs=false
+    pbs=false
+    man nqs >/dev/null 2>&1 && nqs=true
+    man pbs >/dev/null 2>&1 && pbs=true
+    $nqs && which qstat >/dev/null 2>&1 || nqs=false
+    $pbs && which qstat >/dev/null 2>&1 || pbs=false
+    $nqs && which qsub >/dev/null 2>&1 || nqs=false
+    $pbs && which qsub >/dev/null 2>&1 || pbs=false
+    $nqs && pbs=false
+#
+### Generate a list of the NQS/PBS queues ###
+#
+    $nqs && queuelist=$(qstat -as | grep -v "test" | grep "@" | grep -v PIPEONLY | cut -d"@" -f1)
+    $pbs && queuelist=$(qstat -q | grep "E" | cut -d" " -f1 | sort -k 1.3n)
+#
+### Define execution modus ###
+#
+    if [[ -z $modus ]]; then
+      while true; do
+        echo -e "\n Select an execution modus.\n"
+        echo -e "   1. Interactive job (background)"
+        echo -e "   2. Interactive job (foreground)"
+        if [[ -n $queuelist ]]; then
+          qlist=$queuelist
+          unset queuelist
+          icount=2
+          for queue in $qlist; do
+            alloweduser=$(qmgr -c "list queue $queue"|grep acl_users)
+            alloweduser=${alloweduser:-allowed}
+            if [[ $alloweduser != "allowed" ]]; then
+              au=$(qmgr -c "list queue $queue")
+              au1=${au#*acl_users =}
+              au2=${au1%%resources*}
+              alloweduser="acl_users ="$(echo $au2|sed 's/[\x01-\x1F\x7F]//g')
+              eval ${alloweduser//" "/""}
+              for user in ${acl_users//,/" "}; do
+                [ $USER == $user ] && alloweduser="allowed"
+              done
+            fi
+            if [[ $alloweduser == "allowed" ]]; then
+              icount=icount+1
+              queuelist=$queuelist" "$queue
+              $nqs && queuehost=$(qstat -x $queue | grep "Destset" | cut -d"@" -f2 | cut -d"." -f1)
+              $pbs && queuehost=$(qstat -q $queue | grep "server" | cut -d " " -f2)
+                      echo -e "   ${icount}. NQS/PBS batch job in queue ${queue%-*} at $queuehost"
+            fi
+          done
+        fi
+        echo -e "\n Enter a number: \c"
+        read modus
+        case $modus in
+          (+([0-9])) number=$modus;;
+                 (*) if [[ -n $modus ]]; then
+                       echo -e "\n $PROC: $modus is not a number"
+                     fi
+                     continue;;
+        esac
+        if (( $number == 1 )); then
+          modus="interactive"
+          queue="background"
+          queuehost=$shorthost
+          break
+        elif (( $number == 2 )); then
+          modus="interactive"
+          queue="foreground"
+          queuehost=$shorthost
+          break
+        elif (( $number >= 2 && $number <= $icount )); then
+          modus="batch"
+          number=$number-2
+          queue=$(echo $queuelist | cut -d" " -f$number)
+          $nqs && queuehost=$(qstat -x $queue | grep "Destset" | cut -d"@" -f2 | cut -d"." -f1)
+          $pbs && queuehost=$(qstat -q $queue | grep "server" | cut -d " " -f2)
+          break
+        else
+          echo -e "\n $PROC: Invalid menu item $number selected"
+          continue
+        fi
+      done
+    else
+      if [[ $modus = "batch" ]]; then
+        if [[ $nqs = true || $pbs = true ]]; then
+          if [[ -n $queuelist ]]; then
+            queue_exist=false
+            for nqs_queue in $queuelist; do
+              if [[ $nqs_queue = $queue ]]; then
+                queue_exist=true
+                $nqs && queuehost=$(qstat -x $queue | grep "Destset" | cut -d"@" -f2 | cut -d"." -f1)
+                $pbs && queuehost=$(qstat -q $queue | grep "server" | cut -d " " -f2)
+              fi
+            done
+            if [[ $queue_exist = false ]]; then
+              echo -e "\n $PROC: The NQS/PBS queue $queue does not exist"
+              exit_1
+            fi
+          else
+            echo -e "\n $PROC: No NQS/PBS queues found"
+            exit_1
+          fi
+        else
+          echo -e "\n $PROC: No NQS/PBS found"
+          exit_1
+        fi
+      fi
+    fi
+#
+### Predefined program versions ###
+#
+    refstd=$refdir/$VERSION/object.std$FTN/$PROG.$VERSION.std
+    refopt=$refdir/$VERSION/object.opt$FTN/$PROG.$VERSION.opt
+    refdbg=$refdir/$VERSION/object.dbg$FTN/$PROG.$VERSION.dbg
+    refdpg=$refdir/$VERSION/object.dpg$FTN/$PROG.$VERSION.dpg
+    refpro=$refdir/$VERSION/object.pro$FTN/$PROG.$VERSION.pro
+    refmpi=$refdir/$VERSION/object.mpi$FTN/$PROG.$VERSION.mpi
+    refext=$refdir/$VERSION/object.ext$FTN/$PROG.$VERSION.ext
+#
+### User program versions ###
+#
+    usrstd=$CREX_HOME/$prog/$VERSION/object.std$FTN/$PROG.$VERSION.std
+    usropt=$CREX_HOME/$prog/$VERSION/object.opt$FTN/$PROG.$VERSION.opt
+    usrdbg=$CREX_HOME/$prog/$VERSION/object.dbg$FTN/$PROG.$VERSION.dbg
+    usrdpg=$CREX_HOME/$prog/$VERSION/object.dpg$FTN/$PROG.$VERSION.dpg
+    usrpro=$CREX_HOME/$prog/$VERSION/object.pro$FTN/$PROG.$VERSION.pro
+    usrmpi=$CREX_HOME/$prog/$VERSION/object.mpi$FTN/$PROG.$VERSION.mpi
+    usrext=$CREX_HOME/$prog/$VERSION/object.ext$FTN/$PROG.$VERSION.ext
+#
+    programs=$refstd" "$refopt" "$refdbg" "$refdpg" "$refpro" "$refmpi" "$refext
+#
+    if [[ $shorthost = $queuehost ]]; then
+      programs=$programs" "$usrstd" "$usropt" "$usrdbg" "$usrdpg" "$usrpro" "$usrmpi" "$usrext
+    fi
+#
+    if [[ -z $version ]]; then
+      while true; do
+        icount=0
+        echo -e "\n The following program versions are available:\n"
+        for version in $programs; do
+          if [[ -s $version ]]; then
+            icount=$icount+1
+            echo "   ${icount}. $version"
+            versionlist[$icount]=$version
+          fi
+        done
+        echo -e "\n Enter a number: \c" 
+        read version
+        case $version in
+          (+([0-9])) number=$version;;
+                 (*) if [[ -n $version ]]; then
+                       echo -e "\n $PROC: $version is not a number"
+                     fi
+                     continue;;
+        esac
+        if (( $number >= 1 && $number <= $icount )); then
+          program=${versionlist[$number]}
+          break
+        else
+          echo -e "\n $PROC: Invalid menu item $number selected"
+          continue
+        fi
+      done
+    else
+      if [[ -s $version ]]; then
+        program=$version
+      else
+        eval program=\${$version}
+        if [[ -z $program ]]; then
+          echo -e "\n $PROC: The program version $version does not exist"
+          exit_1
+        fi
+      fi
+    fi
+#
+### Check for program version ###
+#
+    if [[ $modus = "interactive" || $shorthost = $queuehost ]]; then
+      if [[ ! -s $program ]]; then
+        echo -e "\n $PROC: The program version $program does not exist"
+        exit_1
+      fi
+    fi
+#
+### MPI settings ###
+#
+    MPI=false
+    MPIPBS=false
+#
+### MPI settings for shared memory (SGI uranio) ###
+#
+    if [[ $queuehost = "uranio" ]]; then
+      cpuset="/usr/sbin/cpuset -q batch -A"
+      if [[ $queue = "p1" ]]; then
+        MPI=true
+        cpuset="/usr/sbin/cpuset -q parallel -A mpirun -np 1"
+      elif [[ $queue = "p3" ]]; then
+        MPI=true
+        cpuset="/usr/sbin/cpuset -q parallel -A mpirun -np 3"
+      elif [[ $queue = "p4" ]]; then
+        MPI=true
+        cpuset="/usr/sbin/cpuset -q parallel -A mpirun -np 4"
+      fi
+    else
+      cpuset=""
+    fi
+#
+### MPI settings for distributed memory (titanio,hierro and litio) ###
+#
+    if [[ $memory -gt 2 ]]; then
+      mpc="mpc4"
+    elif [[ $memory -gt 1 ]]; then
+      mpc="mpc2"
+    else
+      mpc="mpc1"
+    fi
+#
+    qsubopt=""
+#
+    if [[ $queuehost = "rodio" ]]; then
+      mpirun="mpiexec.hydra -np "
+      if [[ ${queue:0:3} = "plC" ]]; then
+        MPI=true
+        MPIPBS=true
+        mpirun=$mpirun"12 -machinefile"
+      elif [[ ${queue:0:2} = "pl" ]]; then
+        MPI=true
+        MPIPBS=true
+        mpirun=$mpirun${queue:2}" -machinefile"
+      elif [[ ${queue} = "ext32" ]]; then
+        MPI=true
+        MPIPBS=true
+        mpirun=$mpirun"32 -machinefile"
+      fi
+#     if [[ -n $qopt ]]; then
+#       qsubopt="-l "$qopt
+#     fi
+    fi
+#
+### Define output path ###
+#
+    if [[ -z $outpath ]]; then
+      outpath=$CREX_HOME/$prog/$VERSION/outputs
+    else
+      cd $outpath >/dev//null 2>&1
+      iferrstat "cd $outpath" "The directory $outpath does not exist"
+      outpath=$PWD
+      cd - >/dev/null
+    fi
+#
+    if [[ ! -d $outpath ]]; then
+      echo -e "\n $PROC: The directory $outpath does not exist"
+      exit_1
+    fi
+#
+### Define output file names ###
+#
+    outfile=$outpath/${inpfiletail%.inp}
+#
+    icount=1
+#
+    ls ${outfile}.out.+([0-9]) >/dev/null 2>&1
+#
+    if (( $? == 0 )); then 
+      for file in ${outfile}.out.+([0-9]); do
+        number=${file##${outfile}.out.}
+        if (( $number >= $icount )); then
+          icount=$number+1
+        fi
+      done
+    else
+      if [[ -f ${outfile}.out ]]; then
+        icount=2
+      fi
+    fi
+#
+    if (( $icount > 1 )); then
+      cycle=.$icount
+    else
+      cycle=
+    fi
+#
+### Create dummy output file ###
+#
+    >${outfile}.out$cycle
+    iferrstat ">${outfile}.out$cycle" "Cannot create the file ${outfile}.out$cycle"
+#
+### Create working directory ###
+#
+    wrkdnam=$USER"."$jobname"."$$
+    tmpdir=$tmpdir/$wrkdnam
+#
+    if [[ $modus = "batch" ]]; then
+      wrkdir=$nqsdir
+    else
+      wrkdir=$tmpdir
+    fi
+#
+    mkdir -p $wrkdir
+    iferrstat "mkdir $wrkdir" "Cannot create the working directory $wrkdir"
+    chmod 777 $wrkdir
+#
+### Define the name of the job file ###
+#
+    jobfile=$wrkdir/jobfile
+#
+### Copy files to working directory ###
+#
+    cp $inpfile $wrkdir/${PROG}.inp
+    if [[ -s ${inpfile%.inp}.rst ]]; then
+      cp ${inpfile%.inp}.rst $wrkdir/${PROG}.rst
+    fi
+    if [[ -s ${inpfile%.inp}.trj ]]; then
+      cp ${inpfile%.inp}.trj $wrkdir/${PROG}.trj
+    fi
+    if [[ -s ${inpfile%.inp}.cub ]]; then
+      cp ${inpfile%.inp}.cub $wrkdir/${PROG}.cub
+    fi
+    if [[ -s ${inpfile%.inp}_LAT.asc ]]; then
+      cp ${inpfile%.inp}_LAT.asc $wrkdir/LAT.asc
+    fi
+    if [[ -s ${inpfile%.inp}_LAT.bin ]]; then
+      cp ${inpfile%.inp}_LAT.bin $wrkdir/LAT.bin
+    fi
+    if [[ -s BASIS ]]; then
+      cp BASIS $wrkdir/BASIS
+    else
+     cp $refdir/BASIS $wrkdir/BASIS
+    fi
+    if [[ -s ECPS ]]; then
+      cp ECPS $wrkdir/ECPS
+    else
+     cp $refdir/ECPS $wrkdir/ECPS
+    fi
+    if [[ -s MCPS ]]; then
+      cp MCPS $wrkdir/MCPS
+    else
+     cp $refdir/MCPS $wrkdir/MCPS
+    fi
+    if [[ -s AUXIS ]]; then
+      cp AUXIS $wrkdir/AUXIS
+    else
+      cp $refdir/AUXIS $wrkdir/AUXIS
+    fi
+    if [[ -s FFDS ]]; then
+      cp FFDS $wrkdir/FFDS
+    else
+      cp $refdir/FFDS $wrkdir/FFDS
+    fi
+    if [[ -s D3CFS ]]; then
+      cp D3CFS $wrkdir/D3CFS
+    else
+      cp $refdir/D3CFS $wrkdir/D3CFS
+    fi
+    if [[ -s $inpfile ]]; then
+      if [[ -s ${inpfile%.inp}.rst ]]; then
+        cp ${inpfile%.inp}.rst $wrkdir/${PROG}.rst
+      fi
+    fi
+    nr=$(grep -c REPLICA $inpfile)
+    if [[ $nr -ne 0 ]]
+    then
+      for id in $(grep REPLICA $inpfile|cut -f2 -d=)
+      do
+        ext=$(printf "%04d" $id)
+        for file in trj rst ; do
+          if [[ -s ${inpfile%.inp}.$file$ext ]]; then
+            cp ${inpfile%.inp}.$file$ext $wrkdir/${PROG}.$file$ext
+          else
+            echo -e "\n $PROC: The file $${inpfile%.inp}.$file$ext does not exist"
+            exit_1
+          fi
+        done
+      done
+    fi
+#
+    chmod a+rw $wrkdir/*
+    chmod a+w $wrkdir
+#
+    echo " "
+#
+### Create jobfile ###
+#
+    if [[ $modus = "interactive" ]]; then
+      cat >$jobfile <<-***
+	#!/bin/bash
+	shopt -s extglob
+	function outfun
+	{
+	if [[ $MPI = "true" ]]; then
+	  for file in *000; do
+	    mv \$file \${file%*000}
+	  done
+	fi
+	if [[ -s ${PROG}.out ]]; then
+	  cat ${PROG}.out >>${outfile}.out$cycle
+	fi
+	if [[ -s $HOME/nohup.out ]]; then
+	  cat $HOME/nohup.out >>${outfile}.out$cycle
+	  rm -f $HOME/nohup.out
+	fi
+	echo -e "\n Execution of $modus request ended on $host at $(date)" >>${outfile}.out$cycle
+	if [[ -s ${PROG}.pie ]]; then
+	  for file in *.asc *.bin; do
+	    unmasked=${outfile}_\${file##*/}$cycle
+	    s1='\/'
+	    s2='\\\\\/'
+	    masked=\$(echo \$unmasked|sed s/\$s1/\$s2/g)
+	    sed s/\$file/\$masked/g ${PROG}.pie >tmp.tmp
+	    mv tmp.tmp ${PROG}.pie
+	  done
+	fi
+	for file in ${PROG}.mem ${PROG}.mol ${PROG}.new ${PROG}.qmm ${PROG}.xry; do
+	  if [[ -s \$file ]]; then
+	    cp \$file ${outfile}.\${file##*.}$cycle
+	  fi
+	done
+	for file in ${PROG}.lat ${PROG}.mkl ${PROG}.pie ${PROG}.trj; do
+	  if [[ -s \$file ]]; then
+	    cp \$file ${outfile}.\${file##*.}$cycle
+	  fi
+	done
+	for file in *.asc *.bin; do
+	  if [[ -s \$file ]]; then
+	    cp \$file ${outfile}_\${file##*/}$cycle
+	  fi
+	done
+	for file in *.nmr11 *.nmr70 *.nmr71 *.nmr72 ; do
+	  if [[ -s \$file ]]; then
+	    mv \$file ${outfile}.\${file##*.}$cycle
+	  fi
+	done
+	}
+	trap 'outfun; exit' 1 2 3 15
+	cd $wrkdir
+	echo -e "\n Execution of $modus request startet on $host at $(date)\n" >${outfile}.out$cycle
+	echo -e " Executing $program\n" >>${outfile}.out$cycle
+	nice -$niceval time $program
+	outfun
+	cd
+	rm -rf $wrkdir
+	***
+      chmod 700 $jobfile
+      cd 
+      rn=$((RANDOM%(10+10+1)-10))
+      rn=$((90+rn))
+      if [[ $queue = "background" ]]; then
+        nohup timeout $rn"s" $jobfile &
+      else
+        timeout $rn"s" $jobfile
+      fi
+      cd - >/dev/null
+    elif [[ $modus = "batch" ]]; then
+      cat >$jobfile <<-***
+	#!/bin/bash
+	shopt -s extglob
+	function outfun
+	{
+	if [[ $MPIPBS = "true" ]]; then
+	  mpdallexit
+	fi
+	if [[ -s ${PROG}.out ]]; then
+	  cat ${PROG}.out
+	fi
+	if [[ -s ${PROG}.pie ]]; then
+	  for file in *.asc *.bin; do
+	    unmasked=${outfile}_\${file##*/}$cycle
+	    s1='\/'
+	    s2='\\\\\/'
+	    masked=\$(echo \$unmasked|sed s/\$s1/\$s2/g)
+	    sed s/\$file/\$masked/g ${PROG}.pie >tmp.tmp
+	    mv tmp.tmp ${PROG}.pie
+	  done
+	fi
+	for file in ${PROG}.{mem,mol,nbo,new,qmm,xry,pt}; do
+	  if [[ -s \$file ]]; then
+	    cp \$file ${outfile}.\${file##*.}$cycle
+	  fi
+	done
+	for file in ${PROG}.lat ${PROG}.mkl ${PROG}.pie ${PROG}.trj; do
+	  if [[ -s \$file ]]; then
+	    cp \$file ${outfile}.\${file##*.}$cycle
+	  fi
+	done
+	for file in *.asc *.bin; do
+	  if [[ -s \$file ]]; then
+	    cp \$file ${outfile}_\${file##*/}$cycle
+	  fi
+	done
+	for file in *.nmr11 *.nmr70 *.nmr71 *.nmr72 ; do
+	  if [[ -s \$file ]]; then
+	    cp \$file ${outfile}.\${file##*.}$cycle
+	  fi
+	done
+	nr=\$(grep -c REPLICA deMon.new)
+	if [[ \$nr -ne 0 ]]
+	then
+	  for id in \$(grep REPLICA deMon.new|cut -f2 -d=)
+	  do
+	    ext=\$(printf "%04d" \$id)
+	    for host in \$(sort -u \$PBS_NODEFILE) ; do
+	      scp -o StrictHostKeyChecking=no \$USER@\$host:\$TMPDIR/deMon.{out,trj,mol,mem}\$ext . 2>/dev/null
+	    done
+	    for file in out trj mol mem ; do
+	      if [[ -s deMon.\$file\$ext ]]; then
+	        cp deMon.\$file\$ext ${outfile}.\$file\$ext$cycle
+	      fi
+	    done
+	  done
+	fi
+	for host in \$(sort -u \$PBS_NODEFILE) ; do
+	  mkdir \$host
+	  cd \$host
+	  scp -o StrictHostKeyChecking=no \$USER@\$host:\$TMPDIR/\$GMON_OUT_PREFIX.* . 2>/dev/null
+	  for file in \$GMON_OUT_PREFIX.* ; do
+	    if [[ -s \$file ]]; then
+	      cp \$file ${outfile}.prf$cycle.\$host.\${file##*.}
+	    fi
+	  done
+	  cd ..
+	done
+	cd - >/dev/null
+	for host in \$(sort -u \$PBS_NODEFILE); do
+	  ssh -o StrictHostKeyChecking=no \$USER@\$host "rm -rf \$TMPDIR"
+	done
+	sleep 5s
+	}
+	if [[ $MPIPBS = "true" ]]; then
+	  #mpirun="$mpirun "\$PBS_NODEFILE
+	  mpirun="mpirun -np "\$(cat \$PBS_NODEFILE|wc -l)
+	fi
+	trap 'outfun; exit' 1 2 3 15
+	export TMPDIR=$tmpdir
+	for host in \$(sort -u \$PBS_NODEFILE); do
+	  ssh -o StrictHostKeyChecking=no \$USER@\$host "mkdir \$TMPDIR"
+	  scp -o StrictHostKeyChecking=no $wrkdir/* \$USER@\$host:\$TMPDIR
+	done
+	cd $wrkdir/..
+	export hostfile=\$PWD/$tmpname.nodes
+	sort -u \$PBS_NODEFILE >\$hostfile
+	cd \$TMPDIR
+	rm -rf $wrkdir
+	echo -e " Executing $program.\n"
+	# Selected executable: $program
+	# Selected queue     : $queue
+	# Selected input     : $inpfile
+	#export LD_LIBRARY_PATH=/opt/openmpi/lib:\$LD_LIBRARY_PATH
+	#export PATH=/opt/openmpi/bin:\$PATH
+	if [[ $MPIPBS = "true" ]]; then
+	  export GMON_OUT_PREFIX="gmon.out-"\$(uname -n)
+	  cat \$PBS_NODEFILE
+	  mpdboot -n \$(uniq \$PBS_NODEFILE | wc -l) -f \$PBS_NODEFILE
+	  sleep 5
+	  mpdtrace
+	  sleep 1
+	  time \$mpirun $program
+	else
+	  $cpuset time $program
+	fi
+	outfun
+	***
+      $nqs && qsub -q $queue -o ${outfile}.out$cycle -r $jobname -eo $jobfile
+      $nqs && iferrstat "qsub -q $queue -o ${outfile}.out$cycle -r $jobname -eo $jobfile"
+#
+      $pbs && jobname=$(expr substr "$jobname" 1 15)
+      $pbs && qsub -q $queue -o ${outfile}.out$cycle -N $jobname -j oe $qsubopt $jobfile
+      $pbs && iferrstat "qsub -q $queue -o ${outfile}.out$cycle -N $jobname -j oe $qsubopt $jobfile"
+      $pbs && sleep 1s
+      cp $jobfile $HOME
+    else
+      echo -e "\n $PROC: Invalid execution modus $modus specified"
+      exit_1
+    fi
+#
+    if [[ $modus = "batch" ]]; then
+      echo -e "\n Execution modus:   $modus"
+      echo -e "\n Batch queue:       ${queue}@${queuehost}"
+    else
+      echo -e "\n Execution modus:   $modus (${queue})"
+    fi
+    echo -e "\n Program version:   $program"
+    echo -e "\n Input file:        $inpfile"
+    echo -e "\n Output file:       ${outfile}.out$cycle"
+    echo -e "\n Working directory: $wrkdnam"
+#   echo -e "\n Requested memory:  $memory GB/core\n"
+    echo -e ""
+#   echo $qsubopt
+#
+### End of procedure ###
