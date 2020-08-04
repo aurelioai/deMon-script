@@ -850,18 +850,44 @@
 	if [[ $totalruns -gt 1 ]];then
 	cat <<'EOT' | ssh \$USER@rodio /bin/bash
 	  cd $outpath/
-  	  if [[ -s ${outfile}.new$cycle ]]; then
-    	    cp ${outfile}.new$cycle ${outfile}.inp
+  	  if [[ -s ${outfile}.inp.1 ]]; then
+  	    if [[ -s ${outfile}.new$cycle ]]; then
+    	      cp ${outfile}.new$cycle ${outfile}.inp
+  	    fi
+  	    if [[ -s ${outfile}.mem$cycle ]]; then
+    	      cp ${outfile}.mem$cycle ${outfile}.rst
+  	    fi
+	    for file in ${outfile}.{trj,rstrt}$cycle; do
+  	      if [[ -s \$file ]]; then
+    	        cp \$file \${file%%$cycle}
+  	      fi
+	    done
+  	  else
+  	    if [[ -s ${outfile}.new ]]; then
+    	      mv ${outfile}.inp ${outfile}.inp.1
+    	      cp ${outfile}.new ${outfile}.inp
+  	    fi
+  	    if [[ -s ${outfile}.mem ]]; then
+    	      cp ${outfile}.rst ${outfile}.rst.1
+    	      cp ${outfile}.mem ${outfile}.rst
+  	    fi
+	    for file in ${outfile}.{trj,rstrt}; do
+  	      if [[ -s \$file ]]; then
+    	        cp \$file \${file}.1
+  	      fi
+	    done
+	    for file in ${outfile}.{out,mem,mol,new}; do
+  	      if [[ -s \$file ]]; then
+    	        mv \$file \${file}.1
+  	      fi
+	    done
   	  fi
-  	  if [[ -s ${outfile}.mem$cycle ]]; then
-    	    cp ${outfile}.mem$cycle ${outfile}.rst
-  	  fi
-	  for file in ${outfile}.{trj,rstrt}$cycle; do
+	  aai-deMon -q $queue -op $outpath -p $version -r $(($totalruns-1)) ${outfile}.inp >> /dev/null
+	  for file in ${outfile}.{inp,rst,rstrt,trj,out,mem,mol,new}; do
   	    if [[ -s \$file ]]; then
-    	      cp \$file \${file%%$cycle}
+    	      rm \$file
   	    fi
 	  done
-	  aai-deMon -q $queue -op $outpath -p $version -r $(($totalruns-1)) ${outfile}.inp >> /dev/null
 	EOT
 	fi
 	############ aai aurelio
