@@ -8,6 +8,7 @@
 #@(#)
 #@(#) Version 3.0 (29.10.05, Florian Janetzko)
 #@(#) Version 3.1 (02.08.17, Gerald Geudtner)
+#@(#) Version 3.X (04.08.17, Aurelio Alvarez) "-run" option
 #
     shopt -s extglob
     set +o noclobber
@@ -238,6 +239,7 @@
 # Default value of totalruns
     if [[ -z $totalruns ]]; then
       totalruns=1
+# Check if argument is valid
     elif [[ ! $totalruns =~ ^[0-9]+$ ]];then
       echo -e "\n $PROC: The number of runs must be a number >= 1"
       exit_1
