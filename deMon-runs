@@ -8,7 +8,7 @@
 #@(#)
 #@(#) Version 3.0 (29.10.05, Florian Janetzko)
 #@(#) Version 3.1 (02.08.17, Gerald Geudtner)
-#@(#) Version 3.X (03.08.20) This is the reference script!! Do not touch
+#@(#) Version 3.X (04.08.17, Aurelio Alvarez) "-run" option
 #
     shopt -s extglob
     set +o noclobber
@@ -177,6 +177,7 @@
                           echo -e " -nv,-nicevalue  \t\t\t nice value"
                           echo -e " -op,-outputpath \t\t\t output path"
                           echo -e " -p,-program     \t\t\t program version"
+                          echo -e " -r,-runs        \t\t\t number of consecutive runs"
                           echo -e " -q,-queue       \t\t\t NQS batch queue\n"
                           exit;;
         (-background|-ib) shift
@@ -212,6 +213,19 @@
                           memory=$1
                           shift
                           continue;;
+############## aai aurelio
+## This options (expecting an integer) gives the number of consecutive
+##   runs for the calculation. The modifications of this script will
+##   take the deMon.new generated from a previous run, rename it as
+##   the next deMon.inp and will launch the next calculation.
+## As a first version, this will work only for batch calculations.
+## The activation of this option calls deMon again, thus a new turn
+##   is asked in the queue, with a new job ID.
+               (-runs|-r) shift
+                          totalruns=$1
+                          shift
+                          continue;;
+############## aai aurelio
     (-queueopt|-qopt|-qo) shift
                           qopt=$1
                           shift
@@ -221,6 +235,19 @@
                       (*) break;;
       esac
     done
+######## aai aurelio
+# Default value of totalruns
+    if [[ -z $totalruns ]]; then
+      totalruns=1
+# Check if argument is valid
+    elif [[ ! $totalruns =~ ^[0-9]+$ ]];then
+      echo -e "\n $PROC: The number of runs must be a number >= 1"
+      exit_1
+    elif [[ $totalruns -le 0 ]];then
+      echo -e "\n $PROC: The number of runs must be a number >= 1"
+      exit_1
+    fi
+######## aai aurelio
 #
 ### Check memory paramter ###
 #
@@ -279,9 +306,9 @@
     if [[ $index != 0 ]]; then
       echo -e "\n The @ character is not allowed in the job name!"
       exit_1
-    elif [[ $length -gt 15 ]]; then
-      echo -e "\n Job name is restricted to 15 characters!"
-      exit_1
+#    elif [[ $length -gt 15 ]]; then
+#      echo -e "\n Job name is restricted to 15 characters!"
+#      exit_1
     fi
 #
 ### Set network queueing system directory ###
@@ -605,6 +632,15 @@
     if [[ -s ${inpfile%.inp}.cub ]]; then
       cp ${inpfile%.inp}.cub $wrkdir/${PROG}.cub
     fi
+    if [[ -s ${inpfile%.inp}.rtp ]]; then
+      cp ${inpfile%.inp}.rtp $wrkdir/${PROG}.rtp
+    fi
+    if [[ -s ${inpfile%.inp}.geo ]]; then
+      cp ${inpfile%.inp}.geo $wrkdir/${PROG}.geo
+    fi
+    if [[ -s ${inpfile%.inp}.rstrt ]]; then
+      cp ${inpfile%.inp}.rstrt $wrkdir/${PROG}.rstrt
+    fi
     if [[ -s ${inpfile%.inp}_LAT.asc ]]; then
       cp ${inpfile%.inp}_LAT.asc $wrkdir/LAT.asc
     fi
@@ -699,7 +735,7 @@
 	    mv tmp.tmp ${PROG}.pie
 	  done
 	fi
-	for file in ${PROG}.mem ${PROG}.mol ${PROG}.new ${PROG}.qmm ${PROG}.xry; do
+	for file in ${PROG}.mem ${PROG}.mol ${PROG}.new ${PROG}.qmm ${PROG}.xry ${PROG}.rtp ${PROG}.geo ${PROG}.rstrt ; do
 	  if [[ -s \$file ]]; then
 	    cp \$file ${outfile}.\${file##*.}$cycle
 	  fi
@@ -761,7 +797,7 @@
 	    mv tmp.tmp ${PROG}.pie
 	  done
 	fi
-	for file in ${PROG}.{mem,mol,nbo,new,qmm,xry,pt}; do
+	for file in ${PROG}.{mem,mol,nbo,new,qmm,xry,pt,rtp,geo,rstrt}; do
 	  if [[ -s \$file ]]; then
 	    cp \$file ${outfile}.\${file##*.}$cycle
 	  fi
@@ -788,9 +824,9 @@
 	  do
 	    ext=\$(printf "%04d" \$id)
 	    for host in \$(sort -u \$PBS_NODEFILE) ; do
-	      scp -o StrictHostKeyChecking=no \$USER@\$host:\$TMPDIR/deMon.{out,trj,mol,mem}\$ext . 2>/dev/null
+	      scp -o StrictHostKeyChecking=no \$USER@\$host:\$TMPDIR/deMon.{out,trj,mol,mem,rtp,geo,rstrt}\$ext . 2>/dev/null
 	    done
-	    for file in out trj mol mem ; do
+	    for file in out trj mol mem rtp geo rstrt; do
 	      if [[ -s deMon.\$file\$ext ]]; then
 	        cp deMon.\$file\$ext ${outfile}.\$file\$ext$cycle
 	      fi
@@ -812,6 +848,53 @@
 	for host in \$(sort -u \$PBS_NODEFILE); do
 	  ssh -o StrictHostKeyChecking=no \$USER@\$host "rm -rf \$TMPDIR"
 	done
+	############ aai aurelio
+	if [[ $totalruns -gt 1 ]];then
+	cat <<'EOT' | ssh \$USER@rodio /bin/bash
+	  cd $outpath/
+  	  if [[ -s ${outfile}.inp.1 ]]; then
+  	    if [[ -s ${outfile}.new$cycle ]]; then
+    	      cp ${outfile}.new$cycle ${outfile}.inp
+  	    fi
+  	    if [[ -s ${outfile}.mem$cycle ]]; then
+    	      cp ${outfile}.mem$cycle ${outfile}.rst
+  	    fi
+	    for file in ${outfile}.{trj,rstrt}$cycle; do
+  	      if [[ -s \$file ]]; then
+    	        cp \$file \${file%%$cycle}
+  	      fi
+	    done
+  	  else
+  	    if [[ -s ${outfile}.new ]]; then
+    	      mv ${outfile}.inp ${outfile}.inp.1
+    	      cp ${outfile}.new ${outfile}.inp
+  	    fi
+  	    if [[ -s ${outfile}.mem ]]; then
+    	      cp ${outfile}.mem ${outfile}.rst.1
+    	      cp ${outfile}.mem ${outfile}.rst
+  	    fi
+	    for file in ${outfile}.{trj,rstrt}; do
+  	      if [[ -s \$file ]]; then
+    	        cp \$file \${file}.1
+  	      fi
+	    done
+	    for file in ${outfile}.{mem,mol,new}; do
+  	      echo "Trying to move \$file to \${file}.1"
+  	      if [[ -s \$file ]]; then
+    	        mv \$file \${file}.1
+    	        echo "done for \$file"
+  	      fi
+	    done
+  	  fi
+	  aai-deMon -q $queue -op $outpath -p $version -r $(($totalruns-1)) ${outfile}.inp >> /dev/null
+	  for file in ${outfile}.{inp,rst,rstrt,trj,mem,mol,new}; do
+  	    if [[ -s \$file ]]; then
+    	      rm \$file
+  	    fi
+	  done
+	EOT
+	fi
+	############ aai aurelio
 	sleep 5s
 	}
 	if [[ $MPIPBS = "true" ]]; then
