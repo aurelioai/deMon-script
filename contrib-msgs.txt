@@ -1,7 +1,13 @@
+AAI, 6-Ago-2020
+* Sugiero que los nuevos comentarios se hagan en la parte superior del archivo.
+* Sugiero que los mensajes sean cortos para que sean legibles en una sola linea.
+* Sugiero no usar acentos ni caracteres que no aparezcan en idioma ingles por compatibilidad.
+* Contribucion: deMon-runs usa la opcion "-runs" para solicitar corridas consecutivas.
+* Contribucion: deMon-heat usa la opcion "-heat" para simular un calentiento en BOMD.
+* deMon-heat fue construida encima de deMon-runs, asi que en deMon-heats funciona "-runs".
+
 CZGC, 5-Ago-2020:
 
 Seguro hay una forma mejor de hacer esto, pero agregué este archivo para discutir con los colaboradores diferentes asuntos del repositorio.
 
 Agregué el archivo progit.pdf, pero es muy pesado (~19 MB) y vuelve lentas las comunicaciones con el repositorio remoto. ¿Deberíamos borrarlo? ¿Quieren copiarlo antes? Saludos...
-
-
