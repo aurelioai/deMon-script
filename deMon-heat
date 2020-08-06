@@ -257,16 +257,17 @@
       totalruns=1
 # Check if "-runs" argument is valid
     elif [[ ! $totalruns =~ ^[0-9]+$ ]];then
-      echo -e "\n $PROC: The number of runs must be a number >= 1"
+      echo -e "\n $PROC: The number of runs must be an integer number >= 1"
       exit_1
     elif [[ $totalruns -le 0 ]];then
-      echo -e "\n $PROC: The number of runs must be a number >= 1"
+      echo -e "\n $PROC: The number of runs must be an integer number >= 1"
       exit_1
     fi
 # Check if "-heat" argument is valid
 # finaltemp deltatemp
     if [[ -n $heating ]]; then
-      if [[ ! $finaltemp =~ ^[0-9]+$ || ! $deltatemp =~ ^[0-9]+$i || $finaltemp -le 0 || $deltatemp -le 0 ]];then
+      if [[ ! $finaltemp =~ ^[0-9]+.?[0-9]*$ || ! $deltatemp =~ ^[0-9]+.?[0-9]*$ ]]; then
+      #                                                                           || $finaltemp -le 0 || $deltatemp -le 0 ]];then
         echo -e "\n $PROC: The temperatures in heating must be numbers >= 0"
         exit_1
       fi
@@ -308,8 +309,9 @@
     done
 ######## aai aurelio
 # If heating is active, overwrite totalruns
-    if [[ $heating = "true" ]]; then
+    if [[ "$heating" == "true" ]]; then
       totalruns=1
+      inputtemp="none"
 # Extracting T= value
       grep "BATH" $inpfile > temp1
       text=$(cat temp1)
@@ -325,18 +327,24 @@
         sed -n "s/.*T=//p" temp1 > temp2
         sed -n "s/ .*//p" temp2 > temp3
         starttemp=$(cat temp3)
+# Input temperature must be preserved for substitution in input text
+        inputtemp=$(cat temp3)
       fi
       if [[ -z $starttemp ]];then
         starttemp=$(cat temp2)
+# Input temperature must be preserved for substitution in input text
+        inputtemp=$(cat temp2)
       fi
       rm -f temp?
-      if [[ $starttemp -gt $finaltemp ]];then
+      if (( $(echo "$starttemp > $finaltemp" |bc -l) )); then
         echo -e "\n Final temperature for heating is larger than start temperature ( $inpfile )"
         exit_1
       fi
+# Printing heating conditions
       starttemp=$(  echo "${starttemp}*1.0" | bc )
       finaltemp=$(  echo "${finaltemp}*1.0" | bc )
       deltatemp=$(  echo "${deltatemp}*1.0" | bc )
+      newtemp=$(    echo "${starttemp}+${deltatemp}*1.0" | bc )
       echo ""
       echo -e "A heating procedure was requested with the following temperatures:"
       echo -e "Start: $starttemp K ; Final: $finaltemp K; Delta: $deltatemp K"
@@ -894,6 +902,9 @@
 	    done
 	  done
 	fi
+	############# cosacosa
+	cp jobfile ${outfile}.job$cycle
+	############# cosacosa
 	for host in \$(sort -u \$PBS_NODEFILE) ; do
 	  mkdir \$host
 	  cd \$host
@@ -910,7 +921,10 @@
 	  ssh -o StrictHostKeyChecking=no \$USER@\$host "rm -rf \$TMPDIR"
 	done
 	############ aai aurelio
-	if [[ $totalruns -gt 1 ]];then
+	######### Code for recursive runs #########
+	echo -e "In jobfile, totalruns = $totalruns"
+	echo -e "In jobfile, heating   = $heating  "
+	if [[ $totalruns -gt 1 || "$heating" == "true" ]];then
 	cat <<'EOT' | ssh \$USER@rodio /bin/bash
 	  cd $outpath/
   	  if [[ -s ${outfile}.inp.1 ]]; then
@@ -946,7 +960,26 @@
   	      fi
 	    done
   	  fi
-	  $PROC -q $queue -op $outpath -p $version -r $(($totalruns-1)) ${outfile}.inp >> /dev/null
+	  if [[ "$heating" == "true" ]];then
+	echo -e "In jobfile, inputtemp = $inputtemp"
+	echo -e "In jobfile, starttemp = $starttemp"
+	echo -e "In jobfile, deltatemp = $deltatemp"
+	echo -e "In jobfile, finaltemp = $finaltemp"
+	    if [[ "$inputtemp" == "none" ]];then
+	      inputtemp=$starttemp
+	    fi
+	    sed -i -e "s/$inputtemp/$newtemp/g" ${outfile}.inp
+	  fi
+	  if [[ "$heating" == "true" ]];then
+	echo -e "In jobfile, heating   = $heating  "
+	    if (( "$(echo "$finaltemp >= $newtemp" |bc -l)" == "1" )); then
+	echo -e "In jobfile, finaltemp >= newtemp"
+	      $PROC -q $queue -op $outpath -p $version -heat $finaltemp $deltatemp ${outfile}.inp
+	    fi
+	  else
+	echo -e "In jobfile, calling -runs part"
+	    $PROC -q $queue -op $outpath -p $version -r $(($totalruns-1)) ${outfile}.inp >> /dev/null
+	  fi
 	  mv ${outfile}.inp ${outfile}.inp.$(($icount+1))
 	  for file in ${outfile}.{rst,rstrt,trj,mem,mol,new}; do
   	    if [[ -s \$file ]]; then
