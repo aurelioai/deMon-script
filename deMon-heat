@@ -317,10 +317,23 @@
         echo -e "\n Heating not possible without BATH ( $inpfile )"
         exit_1
       fi
-      sed -n "s/.*T=//p" temp1 > temp2
-      sed -n "s/ .*//p" temp2 > temp3
-      starttemp=$(cat temp3)
+      text=$(grep "T=" temp1)
+      if [[ -z $text ]];then
+        echo -e "\nDefault initial temperature for deMon2k will be used ( 300K )"
+        starttemp=300
+      else
+        sed -n "s/.*T=//p" temp1 > temp2
+        sed -n "s/ .*//p" temp2 > temp3
+        starttemp=$(cat temp3)
+      fi
+      if [[ -z $starttemp ]];then
+        starttemp=$(cat temp2)
+      fi
       rm -f temp?
+      if [[ $starttemp -gt $finaltemp ]];then
+        echo -e "\n Final temperature for heating is larger than start temperature ( $inpfile )"
+        exit_1
+      fi
       starttemp=$(  echo "${starttemp}*1.0" | bc )
       finaltemp=$(  echo "${finaltemp}*1.0" | bc )
       deltatemp=$(  echo "${deltatemp}*1.0" | bc )
