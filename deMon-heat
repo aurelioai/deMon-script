@@ -9,7 +9,7 @@
 #@(#) Version 3.0 (29.10.05, Florian Janetzko)
 #@(#) Version 3.1 (02.08.17, Gerald Geudtner)
 #@(#) Version 3.X (04.08.17, Aurelio Alvarez) "-run" option
-#@(#) Version 3.Y (04.08.17, Aurelio Alvarez) "-heat" option
+#@(#) Version 3.Y (06.08.17, Aurelio Alvarez) "-heat" option
 #
     shopt -s extglob
     set +o noclobber
@@ -257,18 +257,16 @@
       totalruns=1
 # Check if "-runs" argument is valid
     elif [[ ! $totalruns =~ ^[0-9]+$ ]];then
-      echo -e "\n $PROC: The number of runs must be an integer number >= 1"
+      echo -e "\n $PROC: The number of runs must be an integer >= 1"
       exit_1
     elif [[ $totalruns -le 0 ]];then
-      echo -e "\n $PROC: The number of runs must be an integer number >= 1"
+      echo -e "\n $PROC: The number of runs must be an integer >= 1"
       exit_1
     fi
 # Check if "-heat" argument is valid
-# finaltemp deltatemp
     if [[ -n $heating ]]; then
-      if [[ ! $finaltemp =~ ^[0-9]+.?[0-9]*$ || ! $deltatemp =~ ^[0-9]+.?[0-9]*$ ]]; then
-      #                                                                           || $finaltemp -le 0 || $deltatemp -le 0 ]];then
-        echo -e "\n $PROC: The temperatures in heating must be numbers >= 0"
+      if [[ ! $finaltemp =~ ^[0-9]*.?[0-9]*$ || ! $deltatemp =~ ^[0-9]*.?[0-9]*$ ]]; then
+        echo -e "\n $PROC: The temperatures in heating must be real numbers >= 0"
         exit_1
       fi
     fi
@@ -902,9 +900,6 @@
 	    done
 	  done
 	fi
-	############# cosacosa
-	cp jobfile ${outfile}.job$cycle
-	############# cosacosa
 	for host in \$(sort -u \$PBS_NODEFILE) ; do
 	  mkdir \$host
 	  cd \$host
@@ -922,14 +917,11 @@
 	done
 	############ aai aurelio
 	######### Code for recursive runs #########
-	echo -e "In jobfile, totalruns = $totalruns"
-	echo -e "In jobfile, heating   = $heating  "
 	if [[ $totalruns -gt 1 || "$heating" == "true" ]];then
 	cat <<'EOT' | ssh \$USER@rodio /bin/bash
 	  cd $outpath/
   	  if [[ -s ${outfile}.inp.1 ]]; then
   	    if [[ -s ${outfile}.new$cycle ]]; then
-    	      cp ${outfile}.new$cycle ${outfile}.inp
     	      cp ${outfile}.new$cycle ${outfile}.inp
   	    fi
   	    if [[ -s ${outfile}.mem$cycle ]]; then
@@ -961,26 +953,27 @@
 	    done
   	  fi
 	  if [[ "$heating" == "true" ]];then
-	echo -e "In jobfile, inputtemp = $inputtemp"
-	echo -e "In jobfile, starttemp = $starttemp"
-	echo -e "In jobfile, deltatemp = $deltatemp"
-	echo -e "In jobfile, finaltemp = $finaltemp"
 	    if [[ "$inputtemp" == "none" ]];then
 	      inputtemp=$starttemp
 	    fi
 	    sed -i -e "s/$inputtemp/$newtemp/g" ${outfile}.inp
 	  fi
 	  if [[ "$heating" == "true" ]];then
-	echo -e "In jobfile, heating   = $heating  "
 	    if (( "$(echo "$finaltemp >= $newtemp" |bc -l)" == "1" )); then
-	echo -e "In jobfile, finaltemp >= newtemp"
-	      $PROC -q $queue -op $outpath -p $version -heat $finaltemp $deltatemp ${outfile}.inp
+	      $PROC -q $queue -op $outpath -p $version -heat $finaltemp $deltatemp ${outfile}.inp >> /dev/null
+	      if (( "$(echo "$finaltemp > $newtemp" |bc -l)" == "1" )); then
+	        mv ${outfile}.inp ${outfile}.inp.$(($icount+1))
+	      fi
+	    fi
+	    if (( "$(echo "$finaltemp == $newtemp" |bc -l)" == "1" )); then
+	      rm cosacosa
 	    fi
 	  else
-	echo -e "In jobfile, calling -runs part"
 	    $PROC -q $queue -op $outpath -p $version -r $(($totalruns-1)) ${outfile}.inp >> /dev/null
+	    if [[ $totalruns -lt 1 ]];then
+	      mv ${outfile}.inp ${outfile}.inp.$(($icount+1))
+	    fi
 	  fi
-	  mv ${outfile}.inp ${outfile}.inp.$(($icount+1))
 	  for file in ${outfile}.{rst,rstrt,trj,mem,mol,new}; do
   	    if [[ -s \$file ]]; then
     	      rm \$file
