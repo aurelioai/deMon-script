@@ -9,6 +9,7 @@
 #@(#) Version 3.0 (29.10.05, Florian Janetzko)
 #@(#) Version 3.1 (02.08.17, Gerald Geudtner)
 #@(#) Version 3.X (04.08.17, Aurelio Alvarez) "-run" option
+#@(#) Version 3.Y (04.08.17, Aurelio Alvarez) "-heat" option
 #
     shopt -s extglob
     set +o noclobber
@@ -178,6 +179,7 @@
                           echo -e " -op,-outputpath \t\t\t output path"
                           echo -e " -p,-program     \t\t\t program version"
                           echo -e " -r,-runs        \t\t\t number of consecutive runs"
+                          echo -e " -H,-heat        \t\t\t heating procedure"
                           echo -e " -q,-queue       \t\t\t NQS batch queue\n"
                           exit;;
         (-background|-ib) shift
@@ -214,7 +216,7 @@
                           shift
                           continue;;
 ############## aai aurelio
-## This options (expecting an integer) gives the number of consecutive
+## This option (expecting an integer) gives the number of consecutive
 ##   runs for the calculation. The modifications of this script will
 ##   take the deMon.new generated from a previous run, rename it as
 ##   the next deMon.inp and will launch the next calculation.
@@ -223,6 +225,20 @@
 ##   is asked in the queue, with a new job ID.
                (-runs|-r) shift
                           totalruns=$1
+                          shift
+                          continue;;
+############## aai aurelio
+############## aai aurelio
+## This option (expecting two reals) triggers a "heating" procedure
+##   in which a final temperature is defined in the first argument, 
+##   and a temperature increment is defined in the second argument.
+## The input must have both a BATH keyword and a T= option written.
+## NOTE: "heating" overwrittes the definition in "-runs" (totalruns).
+               (-heat|-H) shift
+                          heating="true"
+                          finaltemp=$1
+                          shift
+                          deltatemp=$1
                           shift
                           continue;;
 ############## aai aurelio
@@ -239,7 +255,7 @@
 # Default value of totalruns
     if [[ -z $totalruns ]]; then
       totalruns=1
-# Check if argument is valid
+# Check if "-runs" argument is valid
     elif [[ ! $totalruns =~ ^[0-9]+$ ]];then
       echo -e "\n $PROC: The number of runs must be a number >= 1"
       exit_1
@@ -247,9 +263,17 @@
       echo -e "\n $PROC: The number of runs must be a number >= 1"
       exit_1
     fi
+# Check if "-heat" argument is valid
+# finaltemp deltatemp
+    if [[ -n $heating ]]; then
+      if [[ ! $finaltemp =~ ^[0-9]+$ || ! $deltatemp =~ ^[0-9]+$i || $finaltemp -le 0 || $deltatemp -le 0 ]];then
+        echo -e "\n $PROC: The temperatures in heating must be numbers >= 0"
+        exit_1
+      fi
+    fi
 ######## aai aurelio
 #
-### Check memory paramter ###
+### Check memory parameter ###
 #
     memory=${memory:-1}
     if [[ $memory -lt 1 || $memory -gt 9 ]]; then
@@ -282,6 +306,30 @@
         break
       fi
     done
+######## aai aurelio
+# If heating is active, overwrite totalruns
+    if [[ $heating = "true" ]]; then
+      totalruns=1
+# Extracting T= value
+      grep "BATH" $inpfile > temp1
+      text=$(cat temp1)
+      if [[ -z $text ]];then
+        echo -e "\n Heating not possible without BATH ( $inpfile )"
+        exit_1
+      fi
+      sed -n "s/.*T=//p" temp1 > temp2
+      sed -n "s/ .*//p" temp2 > temp3
+      starttemp=$(cat temp3)
+      rm -f temp?
+      starttemp=$(  echo "${starttemp}*1.0" | bc )
+      finaltemp=$(  echo "${finaltemp}*1.0" | bc )
+      deltatemp=$(  echo "${deltatemp}*1.0" | bc )
+      echo ""
+      echo -e "A heating procedure was requested with the following temperatures:"
+      echo -e "Start: $starttemp K ; Final: $finaltemp K; Delta: $deltatemp K"
+      echo -e "Warning: -heat option overwrites -runs option!"
+    fi
+######## aai aurelio
 #
     inpfiletail=${inpfile##*/}
 #
