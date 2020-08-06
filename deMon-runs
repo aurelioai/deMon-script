@@ -855,6 +855,7 @@
   	  if [[ -s ${outfile}.inp.1 ]]; then
   	    if [[ -s ${outfile}.new$cycle ]]; then
     	      cp ${outfile}.new$cycle ${outfile}.inp
+    	      cp ${outfile}.new$cycle ${outfile}.inp
   	    fi
   	    if [[ -s ${outfile}.mem$cycle ]]; then
     	      cp ${outfile}.mem$cycle ${outfile}.rst
@@ -879,15 +880,14 @@
   	      fi
 	    done
 	    for file in ${outfile}.{mem,mol,new}; do
-  	      echo "Trying to move \$file to \${file}.1"
   	      if [[ -s \$file ]]; then
     	        mv \$file \${file}.1
-    	        echo "done for \$file"
   	      fi
 	    done
   	  fi
-	  aai-deMon -q $queue -op $outpath -p $version -r $(($totalruns-1)) ${outfile}.inp >> /dev/null
-	  for file in ${outfile}.{inp,rst,rstrt,trj,mem,mol,new}; do
+	  $PROC -q $queue -op $outpath -p $version -r $(($totalruns-1)) ${outfile}.inp >> /dev/null
+	  mv ${outfile}.inp ${outfile}.inp.$(($icount+1))
+	  for file in ${outfile}.{rst,rstrt,trj,mem,mol,new}; do
   	    if [[ -s \$file ]]; then
     	      rm \$file
   	    fi
