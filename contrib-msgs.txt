@@ -1,0 +1,7 @@
+CZGC, 5-Ago-2020:
+
+Seguro hay una forma mejor de hacer esto, pero agregué este archivo para discutir con los colaboradores diferentes asuntos del repositorio.
+
+Agregué el archivo progit.pdf, pero es muy pesado (~19 MB) y vuelve lentas las comunicaciones con el repositorio remoto. ¿Deberíamos borrarlo? ¿Quieren copiarlo antes? Saludos...
+
+
