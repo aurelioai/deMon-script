@@ -8,6 +8,8 @@
 #@(#)
 #@(#) Version 3.0 (29.10.05, Florian Janetzko)
 #@(#) Version 3.1 (02.08.17, Gerald Geudtner)
+#@(#) Version 3.X (04.08.17, Aurelio Alvarez) "-run" option
+#@(#) Version 3.Y (06.08.17, Aurelio Alvarez) "-heat" option
 #
     shopt -s extglob
     set +o noclobber
@@ -176,6 +178,8 @@
                           echo -e " -nv,-nicevalue  \t\t\t nice value"
                           echo -e " -op,-outputpath \t\t\t output path"
                           echo -e " -p,-program     \t\t\t program version"
+                          echo -e " -r,-runs        \t\t\t number of consecutive runs"
+                          echo -e " -H,-heat        \t\t\t heating procedure"
                           echo -e " -q,-queue       \t\t\t NQS batch queue\n"
                           exit;;
         (-background|-ib) shift
@@ -207,14 +211,37 @@
                           queue=$1
                           shift
                           continue;;
-               (-runs|-r) shift
-                          runs=$1
-                          shift
-                          continue;;
         (-memory|-mem|-m) shift
                           memory=$1
                           shift
                           continue;;
+############## aai aurelio
+## This option (expecting an integer) gives the number of consecutive
+##   runs for the calculation. The modifications of this script will
+##   take the deMon.new generated from a previous run, rename it as
+##   the next deMon.inp and will launch the next calculation.
+## As a first version, this will work only for batch calculations.
+## The activation of this option calls deMon again, thus a new turn
+##   is asked in the queue, with a new job ID.
+               (-runs|-r) shift
+                          totalruns=$1
+                          shift
+                          continue;;
+############## aai aurelio
+############## aai aurelio
+## This option (expecting two reals) triggers a "heating" procedure
+##   in which a final temperature is defined in the first argument, 
+##   and a temperature increment is defined in the second argument.
+## The input must have both a BATH keyword and a T= option written.
+## NOTE: "heating" overwrittes the definition in "-runs" (totalruns).
+               (-heat|-H) shift
+                          heating="true"
+                          finaltemp=$1
+                          shift
+                          deltatemp=$1
+                          shift
+                          continue;;
+############## aai aurelio
     (-queueopt|-qopt|-qo) shift
                           qopt=$1
                           shift
@@ -224,8 +251,28 @@
                       (*) break;;
       esac
     done
+######## aai aurelio
+# Default value of totalruns
+    if [[ -z $totalruns ]]; then
+      totalruns=1
+# Check if "-runs" argument is valid
+    elif [[ ! $totalruns =~ ^[0-9]+$ ]];then
+      echo -e "\n $PROC: The number of runs must be an integer >= 1"
+      exit_1
+    elif [[ $totalruns -le 0 ]];then
+      echo -e "\n $PROC: The number of runs must be an integer >= 1"
+      exit_1
+    fi
+# Check if "-heat" argument is valid
+    if [[ -n $heating ]]; then
+      if [[ ! $finaltemp =~ ^[0-9]*.?[0-9]*$ || ! $deltatemp =~ ^[0-9]*.?[0-9]*$ ]]; then
+        echo -e "\n $PROC: The temperatures in heating must be real numbers >= 0"
+        exit_1
+      fi
+    fi
+######## aai aurelio
 #
-### Check memory paramter ###
+### Check memory parameter ###
 #
     memory=${memory:-1}
     if [[ $memory -lt 1 || $memory -gt 9 ]]; then
@@ -258,6 +305,50 @@
         break
       fi
     done
+######## aai aurelio
+# If heating is active, overwrite totalruns
+    if [[ "$heating" == "true" ]]; then
+      totalruns=1
+      inputtemp="none"
+# Extracting T= value
+      grep "BATH" $inpfile > temp1
+      text=$(cat temp1)
+      if [[ -z $text ]];then
+        echo -e "\n Heating not possible without BATH ( $inpfile )"
+        exit_1
+      fi
+      text=$(grep "T=" temp1)
+      if [[ -z $text ]];then
+        echo -e "\nDefault initial temperature for deMon2k will be used ( 300K )"
+        starttemp=300
+      else
+        sed -n "s/.*T=//p" temp1 > temp2
+        sed -n "s/ .*//p" temp2 > temp3
+        starttemp=$(cat temp3)
+# Input temperature must be preserved for substitution in input text
+        inputtemp=$(cat temp3)
+      fi
+      if [[ -z $starttemp ]];then
+        starttemp=$(cat temp2)
+# Input temperature must be preserved for substitution in input text
+        inputtemp=$(cat temp2)
+      fi
+      rm -f temp?
+      if (( $(echo "$starttemp > $finaltemp" |bc -l) )); then
+        echo -e "\n Final temperature for heating is larger than start temperature ( $inpfile )"
+        exit_1
+      fi
+# Printing heating conditions
+      starttemp=$(  echo "${starttemp}*1.0" | bc )
+      finaltemp=$(  echo "${finaltemp}*1.0" | bc )
+      deltatemp=$(  echo "${deltatemp}*1.0" | bc )
+      newtemp=$(    echo "${starttemp}+${deltatemp}*1.0" | bc )
+      echo ""
+      echo -e "A heating procedure was requested with the following temperatures:"
+      echo -e "Start: $starttemp K ; Final: $finaltemp K; Delta: $deltatemp K"
+      echo -e "Warning: -heat option overwrites -runs option!"
+    fi
+######## aai aurelio
 #
     inpfiletail=${inpfile##*/}
 #
@@ -282,9 +373,9 @@
     if [[ $index != 0 ]]; then
       echo -e "\n The @ character is not allowed in the job name!"
       exit_1
-    elif [[ $length -gt 15 ]]; then
-      echo -e "\n Job name is restricted to 15 characters!"
-      exit_1
+#    elif [[ $length -gt 15 ]]; then
+#      echo -e "\n Job name is restricted to 15 characters!"
+#      exit_1
     fi
 #
 ### Set network queueing system directory ###
@@ -608,6 +699,15 @@
     if [[ -s ${inpfile%.inp}.cub ]]; then
       cp ${inpfile%.inp}.cub $wrkdir/${PROG}.cub
     fi
+    if [[ -s ${inpfile%.inp}.rtp ]]; then
+      cp ${inpfile%.inp}.rtp $wrkdir/${PROG}.rtp
+    fi
+    if [[ -s ${inpfile%.inp}.geo ]]; then
+      cp ${inpfile%.inp}.geo $wrkdir/${PROG}.geo
+    fi
+    if [[ -s ${inpfile%.inp}.rstrt ]]; then
+      cp ${inpfile%.inp}.rstrt $wrkdir/${PROG}.rstrt
+    fi
     if [[ -s ${inpfile%.inp}_LAT.asc ]]; then
       cp ${inpfile%.inp}_LAT.asc $wrkdir/LAT.asc
     fi
@@ -702,7 +802,7 @@
 	    mv tmp.tmp ${PROG}.pie
 	  done
 	fi
-	for file in ${PROG}.mem ${PROG}.mol ${PROG}.new ${PROG}.qmm ${PROG}.xry; do
+	for file in ${PROG}.mem ${PROG}.mol ${PROG}.new ${PROG}.qmm ${PROG}.xry ${PROG}.rtp ${PROG}.geo ${PROG}.rstrt ; do
 	  if [[ -s \$file ]]; then
 	    cp \$file ${outfile}.\${file##*.}$cycle
 	  fi
@@ -764,7 +864,7 @@
 	    mv tmp.tmp ${PROG}.pie
 	  done
 	fi
-	for file in ${PROG}.{mem,mol,nbo,new,qmm,xry,pt}; do
+	for file in ${PROG}.{mem,mol,nbo,new,qmm,xry,pt,rtp,geo,rstrt}; do
 	  if [[ -s \$file ]]; then
 	    cp \$file ${outfile}.\${file##*.}$cycle
 	  fi
@@ -791,9 +891,9 @@
 	  do
 	    ext=\$(printf "%04d" \$id)
 	    for host in \$(sort -u \$PBS_NODEFILE) ; do
-	      scp -o StrictHostKeyChecking=no \$USER@\$host:\$TMPDIR/deMon.{out,trj,mol,mem}\$ext . 2>/dev/null
+	      scp -o StrictHostKeyChecking=no \$USER@\$host:\$TMPDIR/deMon.{out,trj,mol,mem,rtp,geo,rstrt}\$ext . 2>/dev/null
 	    done
-	    for file in out trj mol mem ; do
+	    for file in out trj mol mem rtp geo rstrt; do
 	      if [[ -s deMon.\$file\$ext ]]; then
 	        cp deMon.\$file\$ext ${outfile}.\$file\$ext$cycle
 	      fi
@@ -815,6 +915,73 @@
 	for host in \$(sort -u \$PBS_NODEFILE); do
 	  ssh -o StrictHostKeyChecking=no \$USER@\$host "rm -rf \$TMPDIR"
 	done
+	############ aai aurelio
+	######### Code for recursive runs #########
+	if [[ $totalruns -gt 1 || "$heating" == "true" ]];then
+	cat <<'EOT' | ssh \$USER@rodio /bin/bash
+	  cd $outpath/
+  	  if [[ -s ${outfile}.inp.1 ]]; then
+  	    if [[ -s ${outfile}.new$cycle ]]; then
+    	      cp ${outfile}.new$cycle ${outfile}.inp
+  	    fi
+  	    if [[ -s ${outfile}.mem$cycle ]]; then
+    	      cp ${outfile}.mem$cycle ${outfile}.rst
+  	    fi
+	    for file in ${outfile}.{trj,rstrt}$cycle; do
+  	      if [[ -s \$file ]]; then
+    	        cp \$file \${file%%$cycle}
+  	      fi
+	    done
+  	  else
+  	    if [[ -s ${outfile}.new ]]; then
+    	      mv ${outfile}.inp ${outfile}.inp.1
+    	      cp ${outfile}.new ${outfile}.inp
+  	    fi
+  	    if [[ -s ${outfile}.mem ]]; then
+    	      cp ${outfile}.mem ${outfile}.rst.1
+    	      cp ${outfile}.mem ${outfile}.rst
+  	    fi
+	    for file in ${outfile}.{trj,rstrt}; do
+  	      if [[ -s \$file ]]; then
+    	        cp \$file \${file}.1
+  	      fi
+	    done
+	    for file in ${outfile}.{mem,mol,new}; do
+  	      if [[ -s \$file ]]; then
+    	        mv \$file \${file}.1
+  	      fi
+	    done
+  	  fi
+	  if [[ "$heating" == "true" ]];then
+	    if [[ "$inputtemp" == "none" ]];then
+	      inputtemp=$starttemp
+	    fi
+	    sed -i -e "s/$inputtemp/$newtemp/g" ${outfile}.inp
+	  fi
+	  if [[ "$heating" == "true" ]];then
+	    if (( "$(echo "$finaltemp >= $newtemp" |bc -l)" == "1" )); then
+	      $PROC -q $queue -op $outpath -p $version -heat $finaltemp $deltatemp ${outfile}.inp >> /dev/null
+	      if (( "$(echo "$finaltemp > $newtemp" |bc -l)" == "1" )); then
+	        mv ${outfile}.inp ${outfile}.inp.$(($icount+1))
+	      fi
+	    fi
+	    if (( "$(echo "$finaltemp == $newtemp" |bc -l)" == "1" )); then
+	      rm cosacosa
+	    fi
+	  else
+	    $PROC -q $queue -op $outpath -p $version -r $(($totalruns-1)) ${outfile}.inp >> /dev/null
+	    if [[ $totalruns -lt 1 ]];then
+	      mv ${outfile}.inp ${outfile}.inp.$(($icount+1))
+	    fi
+	  fi
+	  for file in ${outfile}.{rst,rstrt,trj,mem,mol,new}; do
+  	    if [[ -s \$file ]]; then
+    	      rm \$file
+  	    fi
+	  done
+	EOT
+	fi
+	############ aai aurelio
 	sleep 5s
 	}
 	if [[ $MPIPBS = "true" ]]; then
