@@ -1,3 +1,9 @@
+
+CZGC, 10-Ago-2020
+-En el tema de los tres scripts estoy de acuerdo, deberia ser uno por rama.
+ Pero aun hay algunas dudas con respecto al manejo de las ramas en git.
+ Cada rama seria incompatible y no se podria hacer merge entre ramas.
+
 AAI, 6-Ago-2020
 * Sugiero que los nuevos comentarios se hagan en la parte superior del archivo.
 * Sugiero que los mensajes sean cortos para que sean legibles en una sola linea.
