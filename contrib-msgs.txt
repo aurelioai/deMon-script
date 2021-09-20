@@ -1,3 +1,6 @@
+LIHS, 20-Sep-2021
+- Estamos en proceso de instalacion de deMon en /usr/local/ en Xiuhcoatl.
+  Tengo listo el script deMon, con cual de los tres scripts deberia hacer el merge?.
 
 CZGC, 10-Ago-2020
 -En el tema de los tres scripts estoy de acuerdo, deberia ser uno por rama.
